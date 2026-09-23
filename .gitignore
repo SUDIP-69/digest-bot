@@ -1,0 +1,5 @@
+*.session
+*.session-journal
+daily_digest.db
+config.py
+__pycache__/
