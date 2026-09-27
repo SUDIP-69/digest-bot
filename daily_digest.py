@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import io
+import os
 import re
 import sqlite3
 import sys
@@ -115,6 +117,74 @@ def normalize(text: str) -> str:
     t = re.sub(r"[^\w\s]", " ", t)          # drop punctuation + emoji
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    if not pdf_bytes:
+        return ""
+
+    extracted_parts = []
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                extracted_parts.append(text.strip())
+    except Exception:
+        extracted_parts = []
+
+    if extracted_parts:
+        return "\n".join(extracted_parts).strip()
+
+    try:
+        import pytesseract
+        from PIL import Image
+        from pdf2image import convert_from_bytes
+
+        pages = convert_from_bytes(pdf_bytes)
+        ocr_text = []
+        for page in pages:
+            text = pytesseract.image_to_string(page)
+            if text.strip():
+                ocr_text.append(text.strip())
+        if ocr_text:
+            return "\n".join(ocr_text).strip()
+    except Exception:
+        pass
+
+    return ""
+
+
+async def message_text_from_event(event) -> str:
+    parts = []
+
+    body = (event.message.message or "").strip()
+    if body:
+        parts.append(body)
+
+    doc = getattr(event.message, "document", None)
+    if doc and getattr(doc, "mime_type", "") == "application/pdf":
+        try:
+            buffer = io.BytesIO()
+            await event.message.download_media(file=buffer)
+            pdf_text = extract_pdf_text(buffer.getvalue())
+            if pdf_text:
+                parts.append(pdf_text)
+        except Exception:
+            try:
+                temp_path = await event.message.download_media(file='.')
+                if temp_path and os.path.exists(temp_path):
+                    with open(temp_path, 'rb') as handle:
+                        pdf_text = extract_pdf_text(handle.read())
+                    if pdf_text:
+                        parts.append(pdf_text)
+            except Exception:
+                pass
+
+    return "\n".join(part for part in parts if part).strip()
 
 
 def content_hash(text: str) -> str:
@@ -246,7 +316,7 @@ async def resolve_channels(client):
 def register_listener(client, entities):
     @client.on(events.NewMessage(chats=entities))
     async def handler(event):
-        text = event.message.message or ""
+        text = await message_text_from_event(event)
         if len(text) < 20:
             return
         if not is_relevant(text):

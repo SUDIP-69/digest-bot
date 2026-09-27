@@ -1,3 +1,7 @@
 telethon
 apscheduler
 tzdata
+pypdf
+pytesseract
+pdf2image
+pillow
